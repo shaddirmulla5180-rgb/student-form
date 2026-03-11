@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
+import traceback
 
 app = Flask(__name__)
 
@@ -65,8 +66,34 @@ def register():
         # Get form data
         data = request.form
         
+        # Validate required fields
+        required_fields = ['first_name', 'last_name', 'email', 'phone', 'date_of_birth', 
+                          'gender', 'address', 'city', 'state', 'zip_code', 'country', 
+                          'course', 'semester']
+        
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({
+                    'success': False,
+                    'message': f'Field {field} is required'
+                }), 400
+        
         # Parse date of birth
-        dob = datetime.strptime(data.get('date_of_birth'), '%Y-%m-%d').date()
+        try:
+            dob = datetime.strptime(data.get('date_of_birth'), '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid date format. Please use YYYY-MM-DD'
+            }), 400
+        
+        # Check if email already exists
+        existing_student = Student.query.filter_by(email=data.get('email')).first()
+        if existing_student:
+            return jsonify({
+                'success': False,
+                'message': 'Email already registered'
+            }), 400
         
         # Create new student
         student = Student(
@@ -97,20 +124,36 @@ def register():
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in register: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({
             'success': False,
             'message': f'Registration failed: {str(e)}'
-        }), 400
+        }), 500
 
 @app.route('/students', methods=['GET'])
 def get_students():
-    students = Student.query.all()
-    return jsonify([student.to_dict() for student in students])
+    try:
+        students = Student.query.all()
+        return jsonify([student.to_dict() for student in students])
+    except Exception as e:
+        print(f"Error in get_students: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to load students: {str(e)}'
+        }), 500
 
 @app.route('/student/<int:id>', methods=['GET'])
 def get_student(id):
-    student = Student.query.get_or_404(id)
-    return jsonify(student.to_dict())
+    try:
+        student = Student.query.get_or_404(id)
+        return jsonify(student.to_dict())
+    except Exception as e:
+        print(f"Error in get_student: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Failed to load student: {str(e)}'
+        }), 500
 
 @app.route('/student/<int:id>', methods=['PUT'])
 def update_student(id):
@@ -118,20 +161,46 @@ def update_student(id):
         student = Student.query.get_or_404(id)
         data = request.form
         
-        student.first_name = data.get('first_name', student.first_name)
-        student.last_name = data.get('last_name', student.last_name)
-        student.email = data.get('email', student.email)
-        student.phone = data.get('phone', student.phone)
+        # Update fields if provided
+        if data.get('first_name'):
+            student.first_name = data.get('first_name')
+        if data.get('last_name'):
+            student.last_name = data.get('last_name')
+        if data.get('email'):
+            # Check if new email already exists (excluding current student)
+            existing = Student.query.filter(Student.email == data.get('email'), Student.id != id).first()
+            if existing:
+                return jsonify({
+                    'success': False,
+                    'message': 'Email already exists'
+                }), 400
+            student.email = data.get('email')
+        if data.get('phone'):
+            student.phone = data.get('phone')
         if data.get('date_of_birth'):
-            student.date_of_birth = datetime.strptime(data.get('date_of_birth'), '%Y-%m-%d').date()
-        student.gender = data.get('gender', student.gender)
-        student.address = data.get('address', student.address)
-        student.city = data.get('city', student.city)
-        student.state = data.get('state', student.state)
-        student.zip_code = data.get('zip_code', student.zip_code)
-        student.country = data.get('country', student.country)
-        student.course = data.get('course', student.course)
-        student.semester = data.get('semester', student.semester)
+            try:
+                student.date_of_birth = datetime.strptime(data.get('date_of_birth'), '%Y-%m-%d').date()
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': 'Invalid date format'
+                }), 400
+        if data.get('gender'):
+            student.gender = data.get('gender')
+        if data.get('address'):
+            student.address = data.get('address')
+        if data.get('city'):
+            student.city = data.get('city')
+        if data.get('state'):
+            student.state = data.get('state')
+        if data.get('zip_code'):
+            student.zip_code = data.get('zip_code')
+        if data.get('country'):
+            student.country = data.get('country')
+        if data.get('course'):
+            student.course = data.get('course')
+        if data.get('semester'):
+            student.semester = data.get('semester')
         
         db.session.commit()
         
@@ -143,10 +212,11 @@ def update_student(id):
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in update_student: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Update failed: {str(e)}'
-        }), 400
+        }), 500
 
 @app.route('/student/<int:id>', methods=['DELETE'])
 def delete_student(id):
@@ -162,10 +232,27 @@ def delete_student(id):
         
     except Exception as e:
         db.session.rollback()
+        print(f"Error in delete_student: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Delete failed: {str(e)}'
-        }), 400
+        }), 500
+
+# Error handler for 404
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        'success': False,
+        'message': 'Resource not found'
+    }), 404
+
+# Error handler for 500
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({
+        'success': False,
+        'message': 'Internal server error'
+    }), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
